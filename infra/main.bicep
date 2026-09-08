@@ -11,7 +11,7 @@ param appName string = 'ml-inference'
 param image string
 
 var blobDataReaderRole = subscriptionResourceId(
-  'Microsoft.Authorization/roleDefinitions'
+  'Microsoft.Authorization/roleDefinitions',
   '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 )
 
