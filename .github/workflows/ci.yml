@@ -10,9 +10,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Install Bicep CLI
         run: az bicep install
       - name: Build Bicep template
         run: az bicep build --file infra/main.bicep --stdout > /tmp/main.json
       - name: Verify generated ARM template
         run: test -s /tmp/main.json
+      - name: Test policy gate
+        run: python -m unittest discover -s tests -v
+      - name: Enforce compiled-template policy
+        run: python tools/validate_arm.py --json /tmp/main.json
