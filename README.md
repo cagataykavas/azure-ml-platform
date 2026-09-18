@@ -65,3 +65,23 @@ This catches Bicep syntax/type errors without placing Azure credentials in pull-
 For interview/vendor translation, the wider portfolio maps AKS, Functions, Event Hubs, Service Bus, Azure Database for PostgreSQL, Cosmos DB, Azure Cache for Redis, Key Vault, API Management, Front Door and Azure Machine Learning to equivalent workload concerns. Those are architectural alternatives unless they are represented by code in this repository; the list above is the concrete compiled Bicep stack.
 
 The repository contains no employer data, credentials or proprietary infrastructure.
+
+
+## Compiled-template policy gate
+
+Bicep compilation proves template shape, not that a future edit preserves the intended
+security posture. CI therefore evaluates the generated ARM JSON with
+`tools/validate_arm.py` and fails if critical invariants drift:
+
+- Blob public access and shared-key authentication remain disabled;
+- OAuth-default, HTTPS-only transport and TLS 1.2 remain enabled;
+- every compiled blob container explicitly denies public access;
+- the Container App retains its system-assigned managed identity;
+- replica bounds are valid and capped at 50;
+- the runtime identity retains an explicit role assignment;
+- console and system logs remain routed to a Log Analytics workspace.
+
+The validator is dependency-free, reports all violations in one pass, supports
+machine-readable JSON output, and has fixture-based regression tests. It deliberately
+does not claim to replace Azure Policy, deployment-time `what-if`, or live permission
+tests; it provides a fast credential-free pull-request boundary.
