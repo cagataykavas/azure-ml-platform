@@ -1,0 +1,22 @@
+name: what-if-gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install pytest ruff==0.16.8
+      - run: ruff check tools/what_if_gate.py tests/test_what_if_gate.py
+      - run: ruff format --check tools/what_if_gate.py tests/test_what_if_gate.py
+      - run: python -m pytest -q tests/test_what_if_gate.py
+      - run: python -m compileall -q tools tests
