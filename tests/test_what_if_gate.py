@@ -4,6 +4,7 @@ import json
 import math
 
 import pytest
+
 from tools.what_if_gate import (
     WhatIfAuditError,
     WhatIfPolicy,
