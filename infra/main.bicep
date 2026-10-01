@@ -10,10 +10,20 @@ param appName string = 'ml-inference'
 @description('Immutable container image URI for the inference service.')
 param image string
 
+@description('Address space for the private ML platform network.')
+param virtualNetworkAddressPrefix string = '10.42.0.0/16'
+
+@description('Dedicated /23 infrastructure subnet for the Container Apps consumption environment.')
+param containerAppsSubnetPrefix string = '10.42.0.0/23'
+
+@description('Subnet used only by private endpoints.')
+param privateEndpointSubnetPrefix string = '10.42.2.0/24'
+
 var blobDataReaderRole = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 )
+var blobPrivateDnsZoneName = 'privatelink.blob.${az.environment().suffixes.storage}'
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: uniqueString(resourceGroup().id, 'mlartifacts')
@@ -27,7 +37,94 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
     allowSharedKeyAccess: false
     defaultToOAuthAuthentication: true
     minimumTlsVersion: 'TLS1_2'
+    networkAcls: {
+      bypass: 'None'
+      defaultAction: 'Deny'
+    }
+    publicNetworkAccess: 'Disabled'
     supportsHttpsTrafficOnly: true
+  }
+}
+
+resource network 'Microsoft.Network/virtualNetworks@2024-01-01' = {
+  name: 'ml-platform-vnet'
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        virtualNetworkAddressPrefix
+      ]
+    }
+  }
+}
+
+resource containerAppsSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' = {
+  parent: network
+  name: 'container-apps'
+  properties: {
+    addressPrefix: containerAppsSubnetPrefix
+  }
+}
+
+resource privateEndpointSubnet 'Microsoft.Network/virtualNetworks/subnets@2024-01-01' = {
+  parent: network
+  name: 'private-endpoints'
+  properties: {
+    addressPrefix: privateEndpointSubnetPrefix
+    privateEndpointNetworkPolicies: 'Disabled'
+  }
+}
+
+resource blobPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = {
+  name: blobPrivateDnsZoneName
+  location: 'global'
+}
+
+resource blobPrivateDnsLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = {
+  parent: blobPrivateDnsZone
+  name: 'ml-platform-link'
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: network.id
+    }
+  }
+}
+
+resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-01-01' = {
+  name: '${storage.name}-blob-pe'
+  location: location
+  properties: {
+    subnet: {
+      id: privateEndpointSubnet.id
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'blob'
+        properties: {
+          groupIds: [
+            'blob'
+          ]
+          privateLinkServiceId: storage.id
+        }
+      }
+    ]
+  }
+}
+
+resource storagePrivateDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-01-01' = {
+  parent: storagePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'blob'
+        properties: {
+          privateDnsZoneId: blobPrivateDnsZone.id
+        }
+      }
+    ]
   }
 }
 
@@ -80,6 +177,9 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: environmentName
   location: location
   properties: {
+    vnetConfiguration: {
+      infrastructureSubnetId: containerAppsSubnet.id
+    }
     appLogsConfiguration: {
       destination: 'log-analytics'
       logAnalyticsConfiguration: {
@@ -181,3 +281,5 @@ output modelContainerName string = modelContainer.name
 output inferenceFqdn string = app.properties.configuration.ingress.fqdn
 output managedIdentityPrincipalId string = app.identity.principalId
 output applicationInsightsConnectionString string = appInsights.properties.ConnectionString
+output virtualNetworkId string = network.id
+output storagePrivateEndpointId string = storagePrivateEndpoint.id
