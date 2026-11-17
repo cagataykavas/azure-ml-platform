@@ -59,6 +59,36 @@ class ProbeAuditTests(unittest.TestCase):
         self.assertEqual(len(result.template_sha256), 64)
         self.assertEqual(len(result.evidence_sha256), 64)
 
+    def test_compiled_static_port_variable_is_accepted(self) -> None:
+        template = valid_template()
+        template["variables"] = {"inferencePort": 8000}
+        port_expression = "[variables('inferencePort')]"
+        template["resources"][0]["properties"]["configuration"]["ingress"][
+            "targetPort"
+        ] = port_expression
+        probes = template["resources"][0]["properties"]["template"]["containers"][0][
+            "probes"
+        ]
+        for probe in probes:
+            probe["httpGet"]["port"] = port_expression
+
+        result = audit_template(template)
+
+        self.assertTrue(result.accepted)
+
+    def test_dynamic_or_invalid_port_variable_fails_closed(self) -> None:
+        for variable_value in (True, "8000", "[parameters('port')]"):
+            with self.subTest(variable_value=variable_value):
+                template = valid_template()
+                template["variables"] = {"inferencePort": variable_value}
+                template["resources"][0]["properties"]["configuration"]["ingress"][
+                    "targetPort"
+                ] = "[variables('inferencePort')]"
+
+                result = audit_template(template)
+
+                self.assertEqual(result.findings, ("INGRESS_TARGET_PORT_INVALID",))
+
     def test_missing_probe_type_is_rejected(self) -> None:
         template = valid_template()
         template["resources"][0]["properties"]["template"]["containers"][0][

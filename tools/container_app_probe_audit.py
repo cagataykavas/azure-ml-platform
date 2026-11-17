@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
@@ -39,6 +40,7 @@ PROBE_POLICY = {
         "successThreshold": 1,
     },
 }
+ARM_VARIABLE_REFERENCE = re.compile(r"^\[variables\('([A-Za-z_][A-Za-z0-9_]*)'\)\]$")
 
 
 class ProbeAuditError(ValueError):
@@ -81,7 +83,7 @@ def audit_template(template: dict[str, Any]) -> ProbeAuditResult:
     if len(apps) != 1:
         findings.append("CONTAINER_APP_COUNT_MISMATCH")
     else:
-        _audit_container_app(apps[0], findings)
+        _audit_container_app(apps[0], template.get("variables"), findings)
 
     template_sha256 = _digest(template)
     policy_sha256 = _digest(PROBE_POLICY)
@@ -148,14 +150,19 @@ def load_template(
     return template
 
 
-def _audit_container_app(app: dict[str, Any], findings: list[str]) -> None:
+def _audit_container_app(
+    app: dict[str, Any], variables: Any, findings: list[str]
+) -> None:
     properties = app.get("properties")
     if not isinstance(properties, dict):
         findings.append("CONTAINER_APP_PROPERTIES_MISSING")
         return
     configuration = properties.get("configuration")
     ingress = configuration.get("ingress") if isinstance(configuration, dict) else None
-    target_port = ingress.get("targetPort") if isinstance(ingress, dict) else None
+    target_port = _resolve_static_port(
+        ingress.get("targetPort") if isinstance(ingress, dict) else None,
+        variables,
+    )
     if not _is_exact_int(target_port) or not 1 <= target_port <= 65_535:
         findings.append("INGRESS_TARGET_PORT_INVALID")
         return
@@ -189,11 +196,13 @@ def _audit_container_app(app: dict[str, Any], findings: list[str]) -> None:
         return
     for probe in probes:
         probe_type = probe["type"]
-        if not _probe_matches(probe, probe_type, target_port):
+        if not _probe_matches(probe, probe_type, target_port, variables):
             findings.append(f"{probe_type.upper()}_PROBE_POLICY_MISMATCH")
 
 
-def _probe_matches(probe: dict[str, Any], probe_type: str, target_port: int) -> bool:
+def _probe_matches(
+    probe: dict[str, Any], probe_type: str, target_port: int, variables: Any
+) -> bool:
     expected = PROBE_POLICY[probe_type]
     expected_keys = {
         "type",
@@ -209,7 +218,9 @@ def _probe_matches(probe: dict[str, Any], probe_type: str, target_port: int) -> 
     http_get = probe.get("httpGet")
     if not isinstance(http_get, dict) or set(http_get) != {"path", "port", "scheme"}:
         return False
-    if http_get != {"path": expected["path"], "port": target_port, "scheme": "HTTP"}:
+    if http_get.get("path") != expected["path"] or http_get.get("scheme") != "HTTP":
+        return False
+    if _resolve_static_port(http_get.get("port"), variables) != target_port:
         return False
     return all(
         _is_exact_int(probe.get(field)) and probe[field] == expected[field]
@@ -225,6 +236,20 @@ def _probe_matches(probe: dict[str, Any], probe_type: str, target_port: int) -> 
 
 def _is_exact_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _resolve_static_port(value: Any, variables: Any) -> Any:
+    """Resolve only a literal port or Bicep's exact static variable reference."""
+
+    if _is_exact_int(value):
+        return value
+    if not isinstance(value, str):
+        return None
+    match = ARM_VARIABLE_REFERENCE.fullmatch(value)
+    if match is None or not isinstance(variables, dict):
+        return None
+    resolved = variables.get(match.group(1))
+    return resolved if _is_exact_int(resolved) else None
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
