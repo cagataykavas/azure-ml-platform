@@ -10,9 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test probe policy audit
+        run: python -m unittest discover -s tests -q
+      - name: Compile Python tooling
+        run: python -m compileall -q tools tests
       - name: Install Bicep CLI
         run: az bicep install
       - name: Build Bicep template
         run: az bicep build --file infra/main.bicep --stdout > /tmp/main.json
       - name: Verify generated ARM template
         run: test -s /tmp/main.json
+      - name: Audit compiled health probes
+        run: python -m tools.container_app_probe_audit /tmp/main.json --output /tmp/probe-audit.json
+      - name: Verify probe evidence
+        run: test -s /tmp/probe-audit.json

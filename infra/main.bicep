@@ -14,6 +14,7 @@ var blobDataReaderRole = subscriptionResourceId(
   'Microsoft.Authorization/roleDefinitions',
   '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
 )
+var inferencePort = 8000
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: uniqueString(resourceGroup().id, 'mlartifacts')
@@ -101,7 +102,7 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     configuration: {
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: inferencePort
         transport: 'auto'
       }
     }
@@ -128,6 +129,47 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('1.0')
             memory: '2Gi'
           }
+          probes: [
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/startup'
+                port: inferencePort
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 1
+              periodSeconds: 10
+              timeoutSeconds: 3
+              failureThreshold: 10
+              successThreshold: 1
+            }
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/live'
+                port: inferencePort
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 10
+              periodSeconds: 10
+              timeoutSeconds: 3
+              failureThreshold: 3
+              successThreshold: 1
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/ready'
+                port: inferencePort
+                scheme: 'HTTP'
+              }
+              initialDelaySeconds: 1
+              periodSeconds: 5
+              timeoutSeconds: 2
+              failureThreshold: 3
+              successThreshold: 1
+            }
+          ]
           env: [
             {
               name: 'ARTIFACT_STORAGE_ACCOUNT'
