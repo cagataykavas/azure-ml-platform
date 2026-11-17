@@ -31,6 +31,7 @@ flowchart LR
 - workspace-based Application Insights;
 - a Container Apps managed environment wired to Log Analytics;
 - an externally reachable Container App with bounded 0–10 replica HTTP autoscaling;
+- explicit startup, liveness and readiness HTTP probes bound to the ingress port;
 - a system-assigned managed identity on the inference app;
 - `Storage Blob Data Reader` RBAC scoped to the storage account;
 - Application Insights connection configuration injected into the application;
@@ -48,6 +49,23 @@ az bicep build --file infra/main.bicep --stdout
 ```
 
 This catches Bicep syntax/type errors without placing Azure credentials in pull-request CI. Compilation validates the template shape; it is not a substitute for a live deployment/what-if against an Azure subscription.
+
+CI also runs a dependency-free audit against the compiled ARM template. The audit requires one
+`api` container with the reviewed `/startup`, `/live`, and `/ready` HTTP probe paths, exact timing
+budgets, and probe ports matching ingress. It rejects missing, additional, ambiguous, or drifted
+probe definitions and emits a deterministic evidence digest:
+
+```bash
+python -m tools.container_app_probe_audit /tmp/main.json \
+  --output /tmp/probe-audit.json
+```
+
+The deployed image must implement all three endpoints. The startup policy checks every 10 seconds
+and permits 10 consecutive failures. Readiness should include
+model-loading state and return failure until the revision can serve traffic; liveness should test
+only whether the process can recover without a restart. Probe success is not proof that every
+downstream dependency or inference result is healthy, and these default timing budgets require
+load and cold-start validation for the actual model image.
 
 ## Cross-cloud mapping
 
